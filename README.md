@@ -2,11 +2,11 @@
 
 Standalone scripts (NumPy/Pandas/Matplotlib/SciPy only) used in the thesis/paper analyses:
 
-- Phasor plot + Δr + efficiency + distance conversion
-- Amplitude-weighted mean arrival time (AWLT) maps
-- FRET-positive fraction (lifetime-index thresholding)
-- EMCCD spectra preprocessing + PCA (SVD implementation)
-- IRF folding/alignment + reconvolution E stability vs fit-start (fixed and Δt-free)
+1. Phasor plot + Δr (windowed-relative phasors for gated TCSPC)
+2. Amplitude-weighted lifetime-index (⟨t⟩) maps
+3. FRET-positive fraction (donor-only reference + σ threshold)
+4. EMCCD spectra + PCA (SVD PCA; no scikit-learn)
+5. IRF folding/alignment + reconvolution E-stability scan (single-exp reconvolution + prompt term)
 
 ## Install
 
