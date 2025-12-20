@@ -1,61 +1,121 @@
 #!/usr/bin/env python3
+"""
+01b_fret_E_distance_paper.py
+
+Convert FRET efficiency E into donor–acceptor separation distance r using the
+Förster relation:
+    E = 1 / (1 + (r/R0)^6)  =>  r = R0 * ((1/E) - 1)^(1/6)
+
+The paper uses an R0 range of 2.8–4.9 nm (aqueous vs membrane-like environments),
+and reports distances for the observed efficiency range.
+
+Inputs:
+- Either provide E values directly (--E) or an E range (--E-min/--E-max),
+- Or point to outputs/fret_fraction_summary.csv and use the global_tail entries.
+
+Outputs:
+  - outputs/fret_distance_summary.csv
+"""
+
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import csv
+import math
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 
-from common_flim import distance_from_E, E_from_distance
 
-def main():
+def r_from_E(E: float, R0_nm: float) -> float:
+    if not (0 < E < 1):
+        return float("nan")
+    return float(R0_nm * ((1.0 / E) - 1.0) ** (1.0 / 6.0))
+
+
+def load_global_E_from_summary(path: Path) -> list[float]:
+    Es = []
+    with open(path, "r", encoding="utf-8") as f:
+        r = csv.DictReader(f)
+        for row in r:
+            if str(row.get("k_sigma", "")).strip() == "global_tail":
+                try:
+                    Es.append(float(row["E_from_fretpos_tbar"]))
+                except Exception:
+                    pass
+    return [e for e in Es if np.isfinite(e)]
+
+
+def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--R0", type=float, required=True, help="Förster radius (nm)")
-    ap.add_argument("--E", nargs="*", type=float, default=[], help="Efficiencies to annotate")
-    ap.add_argument("--labels", nargs="*", default=[], help="Labels for each E")
-    ap.add_argument("--shade", nargs=2, type=float, default=[0.10, 0.22], help="Shade E-range")
-    ap.add_argument("--out", default="out_fret_curve")
+    ap.add_argument("--outdir", default="outputs")
+    ap.add_argument("--summary-csv", default="outputs/fret_fraction_summary.csv",
+                    help="optional: use global_tail efficiencies from this file if it exists")
+    ap.add_argument("--E", type=float, nargs="*", default=[],
+                    help="one or more efficiencies (e.g. 0.046 0.043)")
+    ap.add_argument("--E-min", type=float, default=None)
+    ap.add_argument("--E-max", type=float, default=None)
+    ap.add_argument("--R0-min-nm", type=float, default=4.9)
+    ap.add_argument("--R0-max-nm", type=float, default=4.9)
     args = ap.parse_args()
 
-    outdir = Path(args.out); outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    r = np.linspace(0.5, 12.0, 800)
-    E = np.array([E_from_distance(ri, args.R0) for ri in r])
+    E_vals = list(args.E)
 
-    plt.figure(figsize=(6.8, 4.8))
-    plt.plot(r, E, linewidth=2.0, label=f"Theory (R0={args.R0:g} nm)")
+    # If no explicit E supplied, try to load from summary csv
+    summary_path = Path(args.summary_csv)
+    if not E_vals and summary_path.exists():
+        E_vals = load_global_E_from_summary(summary_path)
 
-    Emin, Emax = args.shade
-    r_a = distance_from_E(Emax, args.R0)
-    r_b = distance_from_E(Emin, args.R0)
-    if np.isfinite(r_a) and np.isfinite(r_b):
-        rlo, rhi = sorted([r_a, r_b])
-        rr = r[(r >= rlo) & (r <= rhi)]
-        if rr.size > 5:
-            plt.fill_between(rr, [E_from_distance(x, args.R0) for x in rr], Emin, alpha=0.2,
-                             label=f"Shaded E={Emin:g}–{Emax:g}")
+    # Else use E range
+    if not E_vals and (args.E_min is not None) and (args.E_max is not None):
+        E_vals = [float(args.E_min), float(args.E_max)]
 
+    if not E_vals:
+        # Fall back to the paper's headline range
+        E_vals = [0.043, 0.046]
+
+    E_min = float(np.min(E_vals))
+    E_max = float(np.max(E_vals))
+
+    R0_min = float(args.R0_min_nm)
+    R0_max = float(args.R0_max_nm)
+
+    # Compute extreme distances across the rectangle of (E,R0)
+    combos = [
+        ("E_min,R0_min", E_min, R0_min),
+        ("E_min,R0_max", E_min, R0_max),
+        ("E_max,R0_min", E_max, R0_min),
+        ("E_max,R0_max", E_max, R0_max),
+    ]
     rows = []
-    for i, Ei in enumerate(args.E):
-        ri = distance_from_E(Ei, args.R0)
-        lab = args.labels[i] if i < len(args.labels) else f"E{i+1}"
-        rows.append({"label": lab, "E": float(Ei), "r_nm": float(ri)})
-        plt.scatter([ri], [Ei], s=70, label=f"{lab}: E={Ei:.3f}, r={ri:.2f} nm")
-        plt.plot([ri, ri], [0, Ei], linestyle="--", linewidth=1.0)
-        plt.plot([0.5, ri], [Ei, Ei], linestyle="--", linewidth=1.0)
+    for label, E, R0 in combos:
+        rows.append({
+            "label": label,
+            "E": E,
+            "R0_nm": R0,
+            "r_nm": r_from_E(E, R0),
+        })
 
-    plt.xlabel("Distance r (nm)"); plt.ylabel("FRET efficiency E")
-    plt.xlim(0.5, 12.0); plt.ylim(0, 1.02)
-    plt.grid(True, alpha=0.3)
-    plt.legend(frameon=False, fontsize=8)
-    plt.tight_layout()
-    plt.savefig(outdir / "E_vs_distance.png", dpi=300)
-    plt.close()
+    r_vals = [r["r_nm"] for r in rows if np.isfinite(r["r_nm"])]
+    r_min = float(np.min(r_vals))
+    r_max = float(np.max(r_vals))
 
-    if rows:
-        pd.DataFrame(rows).to_csv(outdir / "annotated_points.csv", index=False)
+    out_csv = outdir / "fret_distance_summary.csv"
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=["label", "E", "R0_nm", "r_nm"])
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+    print("E range used:", E_min, "to", E_max)
+    print("R0 range used (nm):", R0_min, "to", R0_max)
+    print(f"Distance range (nm): {r_min:.2f} to {r_max:.2f}")
+    print("Saved:", out_csv)
+
 
 if __name__ == "__main__":
     main()
+
