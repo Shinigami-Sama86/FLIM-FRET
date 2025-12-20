@@ -406,3 +406,4 @@ def scan_fit_start_offsets(
         else:
             out.append({"offset_ns": float(off_ns), **best})
     return out
+
